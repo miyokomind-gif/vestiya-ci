@@ -1,3 +1,4 @@
+
 name: Phase 1A Gate
 
 on:
@@ -47,7 +48,7 @@ jobs:
         run: |
           psql -h localhost -U postgres -d vestiya_test -v ON_ERROR_STOP=1 \
             -v session_secret_hex="$VESTIYA_SESSION_SECRET_HEX" \
-            -f secret.sql
+            -f migrations/secret.sql
 
       - name: Set CI password for app role
         env:
