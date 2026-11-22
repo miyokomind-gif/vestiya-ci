@@ -27,16 +27,17 @@ GRANT vestiya_fn_owner TO vestiya_migrator;
 GRANT CREATE ON SCHEMA public TO vestiya_migrator, vestiya_fn_owner;  -- fn_owner temp, revoked at end
 GRANT USAGE  ON SCHEMA public TO vestiya_app, vestiya_fn_owner;
 
--- ================= (0c) Crypto EXECUTE for fn_owner (role now exists) =================
+-- ================= (0c) Crypto & Auth Schema =================
 GRANT EXECUTE ON FUNCTION public.hmac(bytea, bytea, text) TO vestiya_fn_owner;
 GRANT EXECUTE ON FUNCTION public.digest(bytea, text)       TO vestiya_fn_owner;
 
-SET ROLE vestiya_migrator;
-
+-- إنشاء مجلد auth يتم هنا بصلاحيات المدير قبل الانتقال
 CREATE SCHEMA IF NOT EXISTS auth AUTHORIZATION vestiya_migrator;
 REVOKE ALL ON SCHEMA auth FROM PUBLIC, vestiya_app;
 GRANT USAGE  ON SCHEMA auth TO vestiya_fn_owner;
 GRANT CREATE ON SCHEMA auth TO vestiya_fn_owner;  -- temporary
+
+SET ROLE vestiya_migrator;
 
 -- ================= (1) Secret table =================
 CREATE TABLE public.vestiya_session_secret (
@@ -638,7 +639,6 @@ END $$;
 ALTER FUNCTION public.record_usage(text,uuid,jsonb,text,text) OWNER TO vestiya_fn_owner;
 
 -- ================= (10) Table/sequence grants to fn_owner =================
--- (EXECUTE on public.hmac/digest already granted in superuser section (0c).)
 GRANT SELECT, INSERT, UPDATE ON
   public.item_identity, public.location, public.item, public.item_identifier,
   public.item_custody_history, public.event_outbox, public.operation_idempotency
