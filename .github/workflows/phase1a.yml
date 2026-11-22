@@ -1,0 +1,63 @@
+name: Phase 1A Gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: vestiya_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install "psycopg[binary]" pytest
+
+      - name: Generate session secret
+        run: echo "VESTIYA_SESSION_SECRET_HEX=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Apply schema
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d vestiya_test -v ON_ERROR_STOP=1 \
+            -f all.sql
+
+      - name: Bootstrap session secret
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d vestiya_test -v ON_ERROR_STOP=1 \
+            -v session_secret_hex="$VESTIYA_SESSION_SECRET_HEX" \
+            -f secret.sql
+
+      - name: Set CI password for app role
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d vestiya_test -v ON_ERROR_STOP=1 \
+            -c "ALTER ROLE vestiya_app WITH PASSWORD 'ci_fixed_app_pass';"
+
+      - name: Run acceptance tests
+        env:
+          VESTIYA_ADMIN_DSN: postgresql://postgres:postgres@localhost:5432/vestiya_test
+          VESTIYA_APP_DSN: postgresql://vestiya_app:ci_fixed_app_pass@localhost:5432/vestiya_test
+        run: pytest -v --tb=short test_phase1a_gate.py
