@@ -12,12 +12,20 @@ real world. Absence in this inventory is never proof of absence in reality.
 RELEVANCE ORDER (deliberate, do not reorder):
   1. archived            -> IRRELEVANT
   2. non-string sub_type -> UNKNOWN
-  3. known domain type   -> RELEVANT   (a known asset_type is never erased by an
-                                        unrecognised sub_type; ambiguity is
-                                        resolved later by effective_type)
+  3. known domain type   -> RELEVANT
   4. unknown sub_type    -> UNKNOWN
   5. declared out-domain -> IRRELEVANT
   6. otherwise           -> UNKNOWN
+
+AMBIGUITY CONTAINMENT: when effective_type is uninterpretable, UNKNOWN is
+confined to the requirements the item could plausibly satisfy (candidate_types).
+A known base type is never erased, and ambiguity never spreads to requirements
+that base type cannot possibly fulfil.
+
+EMPTY-TAXONOMY SEMANTICS: candidate_types returns None when candidates cannot be
+enumerated. An empty taxonomy branch (e.g. "accessory": set()) means "no subtypes
+declared yet", NOT "proven impossible" — and this holds whether the supplied
+sub_type is known or unknown. Inability to enumerate is UNKNOWN, never NO_MATCH.
 """
 from dataclasses import dataclass, field
 from enum import Enum
@@ -126,12 +134,47 @@ def effective_type(item: InventoryItem) -> str | None:
     return at if at in KNOWN_SUBTYPES else None
 
 
+def candidate_types(item: InventoryItem) -> set[str] | None:
+    """Requirements this item could plausibly satisfy.
+
+    Returns a NON-EMPTY set when candidates are enumerable.
+    Returns None when they are NOT enumerable: an undeclared taxonomy branch,
+    or an uninterpretable base/sub_type pair. None means UNKNOWN, never
+    an exclusion — regardless of whether the supplied sub_type is known.
+    """
+    at = item.asset_type
+    st = _attrs(item).get("sub_type")
+    st_known = isinstance(st, str) and st in KNOWN_SUBTYPES
+    at_known = at in KNOWN_SUBTYPES
+    at_broad = at in PILOT_TAXONOMY
+
+    if at_known and st_known:
+        return {at, st}
+    if at_known:
+        return {at}
+    if at_broad and st_known:
+        allowed = set(PILOT_TAXONOMY[at])
+        return (allowed | {st}) if allowed else None
+    if at_broad:
+        allowed = set(PILOT_TAXONOMY[at])
+        return allowed if allowed else None
+    if st_known:
+        return {st}
+    return None
+
+
 def classify(item: InventoryItem, requirement: str, acceptable: set[str]) -> Verdict:
     if item.archived_at is not None:
         return Verdict.NO_MATCH
+
     eff = effective_type(item)
+
     if eff is None:
-        return Verdict.UNKNOWN
+        cands = candidate_types(item)
+        if cands is None or requirement in cands:
+            return Verdict.UNKNOWN
+        return Verdict.NO_MATCH
+
     if eff != requirement:
         return Verdict.NO_MATCH
     if item.condition_state in UNUSABLE_CONDITIONS:
