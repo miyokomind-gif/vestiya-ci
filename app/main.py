@@ -12,7 +12,7 @@ DSN = os.environ["VESTIYA_DB_DSN"]
 SECRET_BYTES = bytes.fromhex(os.environ["VESTIYA_SESSION_SECRET_HEX"])
 MOCK_AUTH = os.environ.get("VESTIYA_ENABLE_MOCK_AUTH", "false").lower() == "true"
 
-app = FastAPI(title="VESTIYA API", version="1.4.1")
+app = FastAPI(title="VESTIYA API", version="1.4.2")
 api_key_scheme = APIKeyHeader(name="X-Vestiya-Token", scheme_name="ApiKeyAuth", auto_error=False)
 
 def require_token(token: str | None = Depends(api_key_scheme)) -> str:
@@ -122,17 +122,26 @@ class ErrorResponse(BaseModel):
 
 IDEM = Header(..., alias="Idempotency-Key", min_length=1, max_length=255)
 
+STD_ERRORS = {
+    401: {"model": ErrorResponse},
+    403: {"model": ErrorResponse},
+    409: {"model": ErrorResponse},
+    500: {"model": ErrorResponse}
+}
+WRITE_ERRORS = {k: v for k, v in STD_ERRORS.items()}
+READ_ERRORS = {401: {"model": ErrorResponse}, 500: {"model": ErrorResponse}}
+
 @app.get("/health", include_in_schema=False)
 def health():
     return {"status": "ok"}
 
-@app.post("/auth/session", response_model=SessionResponse)
+@app.post("/auth/session", response_model=SessionResponse, responses={403: {"model": ErrorResponse}})
 def create_session(req: SessionRequest):
     if not MOCK_AUTH:
         raise HTTPException(403, "Mock session endpoint is disabled")
     return {"token": mint_token(str(req.user_id), str(req.workspace_id))}
 
-@app.post("/items", response_model=CreateItemResponse, status_code=201)
+@app.post("/items", response_model=CreateItemResponse, status_code=201, responses=WRITE_ERRORS)
 def create_item(body: CreateItemRequest, idempotency_key: str = IDEM, token: str = Depends(require_token)):
     with db(token) as conn, conn.cursor() as cur:
         cur.execute("SELECT public.create_item(%s,%s,%s,%s::jsonb,%s::uuid,%s::uuid,%s,%s)",
@@ -142,13 +151,13 @@ def create_item(body: CreateItemRequest, idempotency_key: str = IDEM, token: str
                      body.p_qr_value, idempotency_key))
         return {"item_id": cur.fetchone()["create_item"]}
 
-@app.get("/items", response_model=list[ItemRead])
+@app.get("/items", response_model=list[ItemRead], responses=READ_ERRORS)
 def list_items(token: str = Depends(require_token)):
     with db(token) as conn, conn.cursor() as cur:
         cur.execute("SELECT * FROM public.item ORDER BY created_at")
         return cur.fetchall()
 
-@app.get("/items/{item_id}", response_model=ItemRead, responses={404: {"model": ErrorResponse}})
+@app.get("/items/{item_id}", response_model=ItemRead, responses={404: {"model": ErrorResponse}, **READ_ERRORS})
 def get_item(item_id: uuid.UUID, token: str = Depends(require_token)):
     with db(token) as conn, conn.cursor() as cur:
         cur.execute("SELECT * FROM public.item WHERE item_id=%s", (str(item_id),))
@@ -157,7 +166,7 @@ def get_item(item_id: uuid.UUID, token: str = Depends(require_token)):
             raise HTTPException(404, "Item not found or not accessible")
         return row
 
-@app.post("/items/{item_id}/move", response_model=EventResponse)
+@app.post("/items/{item_id}/move", response_model=EventResponse, responses=WRITE_ERRORS)
 def move_item(item_id: uuid.UUID, body: MoveItemRequest, idempotency_key: str = IDEM, token: str = Depends(require_token)):
     with db(token) as conn, conn.cursor() as cur:
         cur.execute("SELECT public.move_item(%s,%s::uuid,%s::uuid,%s,%s)",
@@ -165,21 +174,21 @@ def move_item(item_id: uuid.UUID, body: MoveItemRequest, idempotency_key: str = 
                      body.p_reason, idempotency_key))
         return {"event_id": cur.fetchone()["move_item"]}
 
-@app.post("/items/{item_id}/condition", response_model=EventResponse)
+@app.post("/items/{item_id}/condition", response_model=EventResponse, responses=WRITE_ERRORS)
 def set_condition(item_id: uuid.UUID, body: SetConditionRequest, idempotency_key: str = IDEM, token: str = Depends(require_token)):
     with db(token) as conn, conn.cursor() as cur:
         cur.execute("SELECT public.set_item_condition(%s,%s::uuid,%s,%s,%s)",
                     (token, str(item_id), body.p_condition, body.p_reason, idempotency_key))
         return {"event_id": cur.fetchone()["set_item_condition"]}
 
-@app.post("/items/{item_id}/ownership", response_model=EventResponse)
+@app.post("/items/{item_id}/ownership", response_model=EventResponse, responses=WRITE_ERRORS)
 def transfer_ownership(item_id: uuid.UUID, body: TransferOwnershipRequest, idempotency_key: str = IDEM, token: str = Depends(require_token)):
     with db(token) as conn, conn.cursor() as cur:
         cur.execute("SELECT public.transfer_item_ownership(%s,%s::uuid,%s::uuid,%s,%s)",
                     (token, str(item_id), str(body.p_to_user), body.p_reason, idempotency_key))
         return {"event_id": cur.fetchone()["transfer_item_ownership"]}
 
-@app.post("/items/{item_id}/usage", response_model=EventResponse)
+@app.post("/items/{item_id}/usage", response_model=EventResponse, responses=WRITE_ERRORS)
 def record_usage(item_id: uuid.UUID, body: RecordUsageRequest, idempotency_key: str = IDEM, token: str = Depends(require_token)):
     with db(token) as conn, conn.cursor() as cur:
         cur.execute("SELECT public.record_usage(%s,%s::uuid,%s::jsonb,%s,%s)",
