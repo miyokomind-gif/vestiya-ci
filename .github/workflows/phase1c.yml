@@ -1,0 +1,61 @@
+name: Phase 1C Need Engine Gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: vestiya_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install "psycopg[binary]" pytest fastapi httpx pydantic
+      - name: Generate secret
+        run: echo "VESTIYA_SESSION_SECRET_HEX=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+      - name: Apply schema
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          test -f all.sql
+          test -f migrations/secret.sql
+          psql -h localhost -U postgres -d vestiya_test -v ON_ERROR_STOP=1 -f all.sql
+          psql -h localhost -U postgres -d vestiya_test -v ON_ERROR_STOP=1 \
+            -v session_secret_hex="$VESTIYA_SESSION_SECRET_HEX" -f migrations/secret.sql
+          psql -h localhost -U postgres -d vestiya_test -v ON_ERROR_STOP=1 \
+            -c "ALTER ROLE vestiya_app WITH PASSWORD 'ci_app_pass';"
+      - name: Phase 1B regression
+        env:
+          VESTIYA_ADMIN_DSN: postgresql://postgres:postgres@localhost:5432/vestiya_test
+          VESTIYA_DB_DSN: postgresql://vestiya_app:ci_app_pass@localhost:5432/vestiya_test
+          PYTHONPATH: "."
+        run: pytest -v --tb=short tests/test_api.py
+      - name: Phase 1C tests
+        env:
+          VESTIYA_ADMIN_DSN: postgresql://postgres:postgres@localhost:5432/vestiya_test
+          VESTIYA_DB_DSN: postgresql://vestiya_app:ci_app_pass@localhost:5432/vestiya_test
+          PYTHONPATH: "."
+        run: pytest -v --tb=short tests/test_need_logic.py tests/test_need_api.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: openapi-1c
+          path: openapi.json
+          if-no-files-found: ignore
