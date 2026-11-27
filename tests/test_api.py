@@ -80,6 +80,31 @@ def test_apikey_bound_to_all_protected_routes():
         op_security = s["paths"][path][method].get("security", [])
         assert {"ApiKeyAuth": []} in op_security, f"ApiKeyAuth missing on {method.upper()} {path}"
 
+def test_openapi_error_documentation():
+    s = app.openapi()
+    
+    def assert_error_schema(response):
+        assert "content" in response
+        content = response["content"]
+        assert "application/json" in content
+        schema = content["application/json"]["schema"]
+        assert schema.get("$ref", "").endswith("/ErrorResponse")
+
+    for path in ["/items", "/items/{item_id}/move", "/items/{item_id}/condition", "/items/{item_id}/ownership", "/items/{item_id}/usage"]:
+        responses = s["paths"][path]["post"]["responses"]
+        for code in ["401", "403", "409", "500"]:
+            assert code in responses, f"Missing {code} on POST {path}"
+            assert_error_schema(responses[code])
+    
+    responses = s["paths"]["/items/{item_id}"]["get"]["responses"]
+    for code in ["401", "404", "500"]:
+        assert code in responses, f"Missing {code} on GET /items/{{item_id}}"
+        assert_error_schema(responses[code])
+
+    responses = s["paths"]["/auth/session"]["post"]["responses"]
+    assert "403" in responses, "Missing 403 on POST /auth/session"
+    assert_error_schema(responses["403"])
+
 def test_openapi_artifact():
     with open("openapi.json", "w", encoding="utf-8") as f:
         json.dump(app.openapi(), f, ensure_ascii=False, indent=2)
