@@ -96,11 +96,19 @@ def test_openapi_error_documentation():
             assert code in responses, f"Missing {code} on POST {path}"
             assert_error_schema(responses[code])
     
+    # GET /items/{item_id} must have 401, 404, 500
     responses = s["paths"]["/items/{item_id}"]["get"]["responses"]
     for code in ["401", "404", "500"]:
         assert code in responses, f"Missing {code} on GET /items/{{item_id}}"
         assert_error_schema(responses[code])
 
+    # GET /items must have 401, 500
+    responses = s["paths"]["/items"]["get"]["responses"]
+    for code in ["401", "500"]:
+        assert code in responses, f"Missing {code} on GET /items"
+        assert_error_schema(responses[code])
+
+    # /auth/session must have 403
     responses = s["paths"]["/auth/session"]["post"]["responses"]
     assert "403" in responses, "Missing 403 on POST /auth/session"
     assert_error_schema(responses["403"])
