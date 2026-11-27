@@ -1,5 +1,5 @@
 from app.need_engine import (
-    InventoryItem, evaluate_need, relevance, effective_type,
+    InventoryItem, evaluate_need, relevance, effective_type, candidate_types,
     Relevance, Verdict, NEED_RULES,
 )
 
@@ -161,7 +161,8 @@ def test_non_string_subtype_list_is_unclassifiable():
 
 
 def test_non_object_attributes_is_tolerated():
-    item = InventoryItem(item_id="1", asset_type="shirt", attributes=["not", "a", "dict"])
+    item = InventoryItem(item_id="1", asset_type="shirt",
+                         attributes=["not", "a", "dict"], condition_state="good")
     r = evaluate_need(NEED, [item, I("2", "pants"), I("3", "formal_shoes")])
     assert r.status == "EVALUATE" and r.has_sufficient_items is True
 
@@ -174,7 +175,7 @@ def test_known_asset_type_with_unknown_subtype_stays_relevant():
     assert effective_type(item) is None
     r = evaluate_need(NEED, [item])
     assert r.status == "ABSTAIN"
-    assert r.reason_code == "AMBIGUOUS_DATA"          # NOT UNCLASSIFIABLE_INVENTORY
+    assert r.reason_code == "AMBIGUOUS_DATA"
     assert r.unknown_requirements == ["shirt"]
 
 
@@ -184,4 +185,93 @@ def test_unknown_subtype_does_not_erase_other_matched_evidence():
     assert r.reason_code == "AMBIGUOUS_DATA"
     assert set(r.matched_items) == {"2", "3"}
     assert r.unknown_requirements == ["shirt"]
+    assert r.gaps == []
+
+
+# ── Ambiguity containment: UNKNOWN must not spread beyond candidate types ──
+def test_ambiguity_does_not_spread_to_impossible_requirements():
+    r = evaluate_need(NEED, [I("1", "shirt", "blouse")])
+    assert r.unknown_requirements == ["shirt"]
+    assert set(r.gaps) == {"pants", "formal_shoes"}
+
+
+def test_broad_type_ambiguity_covers_only_its_taxonomy():
+    r = evaluate_need(NEED, [I("1", "garment", "blouse")])
+    assert set(r.unknown_requirements) == {"shirt", "pants"}
+    assert r.gaps == ["formal_shoes"]
+
+
+def test_known_subtype_conflict_keeps_both_candidates():
+    item = I("1", "shirt", "pants")
+    assert candidate_types(item) == {"shirt", "pants"}
+    r = evaluate_need(NEED, [item])
+    assert set(r.unknown_requirements) == {"shirt", "pants"}
+    assert r.gaps == ["formal_shoes"]
+
+
+def test_incompatible_broad_pair_keeps_both_candidates():
+    item = I("1", "footwear", "shirt")
+    assert candidate_types(item) == {"formal_shoes", "shirt"}
+    r = evaluate_need(NEED, [item])
+    assert set(r.unknown_requirements) == {"shirt", "formal_shoes"}
+    assert r.gaps == ["pants"]
+
+
+def test_uninterpretable_base_with_known_subtype_scopes_ambiguity():
+    r = evaluate_need(NEED, [I("1", "misc", "shirt")])
+    assert r.unknown_requirements == ["shirt"]
+    assert set(r.gaps) == {"pants", "formal_shoes"}
+
+
+def test_broad_without_subtype_scopes_to_its_taxonomy():
+    item = I("1", "shoes")
+    assert candidate_types(item) == {"formal_shoes"}
+    r = evaluate_need(NEED, [item])
+    assert r.unknown_requirements == ["formal_shoes"]
+    assert set(r.gaps) == {"shirt", "pants"}
+
+
+# ── Empty taxonomy != proven exclusion. Undeclared branch must ABSTAIN. ──
+def test_accessory_without_subtype_is_unknown_not_excluded():
+    item = I("1", "accessory")
+    assert relevance(item) is Relevance.RELEVANT
+    assert candidate_types(item) is None
+    r = evaluate_need(NEED, [item])
+    assert r.status == "ABSTAIN"
+    assert r.reason_code == "AMBIGUOUS_DATA"
+    assert r.has_sufficient_items is None
+    assert set(r.unknown_requirements) == {"shirt", "pants", "formal_shoes"}
+    assert r.gaps == []
+
+
+def test_accessory_with_unknown_subtype_is_unknown_not_excluded():
+    item = I("1", "accessory", "blouse")
+    assert candidate_types(item) is None
+    r = evaluate_need(NEED, [item])
+    assert r.status == "ABSTAIN"
+    assert r.reason_code == "AMBIGUOUS_DATA"
+    assert r.gaps == []
+
+
+def test_accessory_does_not_block_definite_full_match():
+    r = evaluate_need(NEED, full() + [I("9", "accessory")])
+    assert r.status == "EVALUATE" and r.has_sufficient_items is True
+
+
+def test_broad_subtype_label_without_known_type_is_unknown():
+    item = I("1", "misc", "garment")
+    assert candidate_types(item) is None
+    r = evaluate_need(NEED, [item])
+    assert r.status == "ABSTAIN" and r.reason_code == "AMBIGUOUS_DATA"
+    assert r.gaps == []
+
+
+def test_accessory_with_known_subtype_does_not_invent_closed_taxonomy():
+    item = I("1", "accessory", "shirt")
+    assert effective_type(item) is None
+    assert candidate_types(item) is None
+    r = evaluate_need(NEED, [item])
+    assert r.status == "ABSTAIN"
+    assert r.reason_code == "AMBIGUOUS_DATA"
+    assert r.unknown_requirements == ["shirt", "pants", "formal_shoes"]
     assert r.gaps == []
