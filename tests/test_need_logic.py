@@ -161,8 +161,12 @@ def test_non_string_subtype_list_is_unclassifiable():
 
 
 def test_non_object_attributes_is_tolerated():
-    item = InventoryItem(item_id="1", asset_type="shirt",
-                         attributes=["not", "a", "dict"], condition_state="good")
+    item = InventoryItem(
+        item_id="1",
+        asset_type="shirt",
+        attributes=["not", "a", "dict"],
+        condition_state="good",
+    )
     r = evaluate_need(NEED, [item, I("2", "pants"), I("3", "formal_shoes")])
     assert r.status == "EVALUATE" and r.has_sufficient_items is True
 
